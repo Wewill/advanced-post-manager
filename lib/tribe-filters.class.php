@@ -28,6 +28,9 @@ class Tribe_Filters {
 	private $val_pre;
 
 	private $query_options;
+//--------------------------------------------------------------------------------------------------------------------------------
+	private $metaquery_options; // WILHEM
+//--------------------------------------------------------------------------------------------------------------------------------
 
 	private $query_options_map;
 
@@ -65,17 +68,35 @@ class Tribe_Filters {
 			'gte' => '>=',
 			'lte' => '<=',
 			'like' => 'LIKE',
+//--------------------------------------------------------------------------------------------------------------------------------
+			'between' => 'BETWEEN', // WILHEM
+			'notbetween' => 'NOT BETWEEN', // WILHEM
+//--------------------------------------------------------------------------------------------------------------------------------
 		);
 
 		$this->query_search_options = array(
-			'like' => __( 'Search', 'tribe-apm' ),
+//--------------------------------------------------------------------------------------------------------------------------------
+			'like' => __( 'Search ( LIKE )', 'tribe-apm' ),
+//--------------------------------------------------------------------------------------------------------------------------------
 			'is' => __( 'Is', 'tribe-apm' ),
 			'not' => __( 'Is Not', 'tribe-apm' ),
 			'gt' => '>',
 			'lt' => '<',
 			'gte' => '>=',
 			'lte' => '<=',
+//--------------------------------------------------------------------------------------------------------------------------------
+			'between' => __( '> <  (separate by ,)', 'tribe-apm' ), // WILHEM
+			'notbetween' => __( '< >  (separate by ,)', 'tribe-apm' ), // WILHEM
+//--------------------------------------------------------------------------------------------------------------------------------
 		);
+
+//--------------------------------------------------------------------------------------------------------------------------------
+		// WILHEM / ADD METAQUERIES OPTIONS BTW METAS
+		$this->metaquery_options = array(
+			'AND' => __( 'AND', 'tribe-apm' ),
+			'OR' => __( 'OR', 'tribe-apm' ),
+		);
+//--------------------------------------------------------------------------------------------------------------------------------
 
 		$this->filters_example = array(
 			'filter_key' => array(
@@ -299,7 +320,42 @@ class Tribe_Filters {
 		$old_meta_query = $wp_query->get( 'meta_query' );
 		$old_meta_query = ( empty( $old_meta_query ) ) ? array() : $old_meta_query;
 		$meta_query = array_merge( $old_meta_query, $meta_query );
-		$wp_query->set( 'meta_query', $meta_query );
+		
+//--------------------------------------------------------------------------------------------------------------------------------
+		// WILHEM / REORDER AND & OR QUERY IN TWO SEPARATE ARRAYS 
+		$or_meta_query = array();
+		$and_meta_query = array();
+		foreach($meta_query as $mq) {
+			if($mq['relation'] == 'OR')
+				$or_meta_query[] = 	$mq[0];	
+			if($mq['relation'] == 'AND')
+				$and_meta_query[] = $mq[0];	
+		} 
+		
+		// WILHEM / PLACE AND & OR QUERIES IN ORDER TO FINAL ARRAY 
+		$final_meta_query = array(
+			'relation' => 'OR',
+			$or_meta_query,
+			array(
+				'relation' => 'AND',
+				$and_meta_query
+			),
+		);
+		
+
+// TEST 		
+
+		
+		// WILHEM / BUILD NEW QUERY
+		$wp_query->set( 'meta_query', $final_meta_query );
+add_filter( 'posts_clauses', 'wpse158898_posts_clauses', 10, 2 );
+		//print_r($wp_query);
+		
+		// WILHEM / OLD QUERY REMOVED 
+		//$wp_query->set( 'meta_query', $meta_query );
+//--------------------------------------------------------------------------------------------------------------------------------
+
+		//$this->maybe_set_ordering( $wp_query );
 
 		$this->maybe_set_ordering( $wp_query );
 
@@ -488,8 +544,14 @@ class Tribe_Filters {
 	protected function maybe_active_meta( $key, $filter ) {
 		$val = $this->val_pre . $key;
 		$is = $this->is_pre . $key;
+//--------------------------------------------------------------------------------------------------------------------------------
+		$mqopt = $this->is_pre . $key . '_mqopt'; // WILHEM
+//--------------------------------------------------------------------------------------------------------------------------------
 		if ( isset( $_POST[ $val ] ) && isset( $_POST[ $is ] ) && ( $_POST[ $val ] !== '' ) ) {
-			return array( 'value' => $_POST[ $val ], 'query_option' => $_POST[ $is ] );
+			//return array( 'value' => $_POST[ $val ], 'query_option' => $_POST[ $is ]	 ); // WILHEM / OLD
+//--------------------------------------------------------------------------------------------------------------------------------
+			return array( 'value' => $_POST[ $val ], 'query_option' => $_POST[ $is ], 'metaquery_option' => $_POST[ $mqopt ] ); // WILHEM / NEW
+//--------------------------------------------------------------------------------------------------------------------------------
 		}
 		return false;
 	}
@@ -588,6 +650,13 @@ class Tribe_Filters {
 		elseif ( isset( $filter['custom_type'] ) ) {
 			$ret = apply_filters( 'tribe_custom_row' . $filter['custom_type'], '', $key, $value, $filter );
 		}
+
+//--------------------------------------------------------------------------------------------------------------------------------
+		// WILHEM / ADD AND & OR SELECT BOX 
+		$metaquery_options = apply_filters( 'tribe_metaquery_options', $this->metaquery_options, $key, $filter );
+		$is_key = $this->is_pre . $key . '_mqopt';
+		$ret .= self::select_field( $is_key, $metaquery_options, isset($value['metaquery_option']) ? $value['metaquery_option'] : '' );
+//--------------------------------------------------------------------------------------------------------------------------------
 
 		return $before . $ret . $after;
 	}
@@ -728,11 +797,34 @@ class Tribe_Filters {
 
 	protected function meta_query( $key, $val ) {
 		$filter = $this->filters[ $key ];
+		
+//--------------------------------------------------------------------------------------------------------------------------------
+		// WILHEM / TO REMOVE 
+		//print_r($val['value']);
+		//print_r($val['query_option']);
+//--------------------------------------------------------------------------------------------------------------------------------
+		// WILHEM / TRANSFORM VALUE TO ARRAY IF IS <> & ><
+		$value = '';
+		$compare = $val['query_option'];
+		
+		if ( $compare === 'between' || $compare === 'notbetween' )
+			$value = explode(',',$val['value']);
+		else 
+			$value = $val['value'];
+		
 		$meta_query = array(
-			'key' => $filter['meta'],
-			'value' => $val['value'],
-			'compare' => $this->map_meta_compare( $val ),
-			'type' => $this->map_meta_cast( $filter ),
+//--------------------------------------------------------------------------------------------------------------------------------
+			'relation' => $this->map_meta_relation( $val ), // WILHEM
+//--------------------------------------------------------------------------------------------------------------------------------
+			array(
+				'key' => $filter['meta'],
+//--------------------------------------------------------------------------------------------------------------------------------
+				//'value' => $val['value'], // WILHEM / OLD
+				'value' => $value, // NEW
+//--------------------------------------------------------------------------------------------------------------------------------
+				'compare' => $this->map_meta_compare( $val ),
+				'type' => $this->map_meta_cast( $filter ),
+			),				
 		);
 		return apply_filters( 'tribe_filters_meta_query', $meta_query, $key, $val, $filter );
 	}
@@ -751,6 +843,14 @@ class Tribe_Filters {
 		}
 		return $this->query_options_map[ $compare ];
 	}
+
+//--------------------------------------------------------------------------------------------------------------------------------
+	// WILHEM / ADD RELATION CHECK FCT 
+	protected function map_meta_relation( $val ) {
+		$relation = ( isset( $val['metaquery_option'] ) ) ? $val['metaquery_option'] : 'AND';
+		return $relation;
+	}
+//--------------------------------------------------------------------------------------------------------------------------------
 
 	public function map_query_option( $option ) {
 		return $this->query_options_map[ $option ];
